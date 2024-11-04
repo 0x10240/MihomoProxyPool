@@ -297,12 +297,6 @@ func AddProxy(req AddProxyReq) error {
 		cfg = req.Config
 	}
 
-	if req.Sub != "" {
-		if err := AddSubscriptionProxies(req.Sub); err != nil {
-			return err
-		}
-	}
-
 	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
 	cfg["name"] = key
 	localPort := getLocalPort()

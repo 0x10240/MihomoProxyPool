@@ -121,6 +121,15 @@ func addProxy(w http.ResponseWriter, r *http.Request) {
 		render.JSON(w, r, ErrBadRequest)
 		return
 	}
+
+	if req.Sub != "" {
+		if err := proxypool.AddSubscriptionProxies(req.Sub); err != nil {
+			render.Status(r, http.StatusServiceUnavailable)
+			render.JSON(w, r, newError(err.Error()))
+			return
+		}
+	}
+
 	if err := proxypool.AddProxy(req); err != nil {
 		render.Status(r, http.StatusServiceUnavailable)
 		render.JSON(w, r, newError(err.Error()))
