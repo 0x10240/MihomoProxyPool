@@ -122,20 +122,22 @@ func addProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Sub != "" {
-		if err := proxypool.AddSubscriptionProxies(req.Sub); err != nil {
+	if req.SubUrl != "" {
+		if err := proxypool.AddSubscriptionProxies(req); err != nil {
+			render.Status(r, http.StatusServiceUnavailable)
+			render.JSON(w, r, newError(err.Error()))
+			return
+		}
+	} else {
+		if err := proxypool.AddProxy(req); err != nil {
 			render.Status(r, http.StatusServiceUnavailable)
 			render.JSON(w, r, newError(err.Error()))
 			return
 		}
 	}
 
-	if err := proxypool.AddProxy(req); err != nil {
-		render.Status(r, http.StatusServiceUnavailable)
-		render.JSON(w, r, newError(err.Error()))
-		return
-	}
-	render.NoContent(w, r)
+	render.Status(r, 200)
+	render.JSON(w, r, map[string]bool{"success": true})
 }
 
 func getRandomProxy(w http.ResponseWriter, r *http.Request) {

@@ -3,10 +3,10 @@ package healthcheck
 import (
 	"context"
 	"fmt"
-	"github.com/0x10240/mihomo-proxy-pool/ipinfo"
 	"sync"
 	"time"
 
+	"github.com/0x10240/mihomo-proxy-pool/ipinfo"
 	"github.com/0x10240/mihomo-proxy-pool/proxypool"
 	"github.com/metacubex/mihomo/adapter"
 	cutils "github.com/metacubex/mihomo/common/utils"
@@ -22,20 +22,13 @@ const (
 )
 
 // checkProxy 检查单个代理的健康状况
-func checkProxy(proxy *proxypool.Proxy) error {
-	cproxy, err := adapter.ParseProxy(proxy.Config)
-	if err != nil {
-		return err
-	}
-
+func checkProxy(cproxy proxypool.CProxy) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
 	expectedStatus, _ := cutils.NewUnsignedRanges[uint16]("200-300")
 	delay, err := cproxy.URLTest(ctx, defaultTestUrl, expectedStatus)
-	proxy.Delay = int(delay)
-	logger.Debugf("proxy: %v delay: %v", proxy.Name, delay)
-	return err
+	return int(delay), err
 }
 
 // DoHealthCheck 对代理池中的所有代理进行健康检查
@@ -56,8 +49,14 @@ func DoHealthCheck() error {
 			semaphore <- struct{}{}        // 获取一个令牌
 			defer func() { <-semaphore }() // 确保令牌释放
 
+			cproxy, err := adapter.ParseProxy(proxy.Config)
+			if err != nil {
+				logger.Errorf("parse proxy %v failed: err: %v", proxy.Name, err)
+				return
+			}
+
 			// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
-			err := checkProxy(&proxy)
+			delay, err := checkProxy(cproxy)
 			if err != nil {
 				logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
 				proxy.FailCount++
@@ -73,13 +72,17 @@ func DoHealthCheck() error {
 				proxy.FailCount = 0
 			}
 
-			if proxy.IpRiskScore == "" {
+			proxy.Delay = delay
+			if err == nil && proxy.OutboundIp == "" {
+				proxy.OutboundIp = ipinfo.GetProxyOutboundIP(cproxy)
+			}
+
+			if err == nil && proxy.IpRiskScore == "" {
 				proxyStr := fmt.Sprintf("socks5://127.0.0.1:%d", proxy.LocalPort)
-				ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.Config["server"].(string), proxyStr)
+				ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
 				if err != nil {
 					logger.Infof("get ip risk info failed")
 				}
-				proxy.OutboundIp = ipRiskVal.Ip
 				proxy.IpType = ipRiskVal.IpType
 				proxy.IpRiskScore = ipRiskVal.RiskScore
 				proxy.Region = ipRiskVal.Location

@@ -1,40 +1,16 @@
 package proxypool
 
 import (
-	"context"
 	"fmt"
 	"github.com/go-resty/resty/v2"
-	"github.com/metacubex/mihomo/constant"
 	logger "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 	"math/rand"
-	"net"
-	"net/http"
-	"strconv"
 )
 
 type RawConfig struct {
 	Providers map[string]map[string]any `yaml:"proxy-providers"`
 	Proxies   []map[string]any          `yaml:"proxies"`
-}
-
-func getProxyTransport(proxy CProxy) *http.Transport {
-	return &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, portStr, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			port, err := strconv.ParseUint(portStr, 10, 16)
-			if err != nil {
-				return nil, err
-			}
-			return proxy.DialContext(ctx, &constant.Metadata{
-				Host:    host,
-				DstPort: uint16(port),
-			})
-		},
-	}
 }
 
 func getRandomCProxy() CProxy {
@@ -54,7 +30,7 @@ func readConfig(url string, proxy CProxy) ([]byte, error) {
 
 	// 如果 proxy 不为空，设置代理
 	if proxy != nil {
-		transPort := getProxyTransport(proxy)
+		transPort := GetProxyTransport(proxy)
 		client.SetTransport(transPort)
 	}
 
@@ -71,7 +47,9 @@ func readConfig(url string, proxy CProxy) ([]byte, error) {
 	return resp.Body(), nil
 }
 
-func AddSubscriptionProxies(url string) error {
+func AddSubscriptionProxies(req AddProxyReq) error {
+	url := req.SubUrl
+
 	var cproxy CProxy
 	for i := 0; i < 5; i++ {
 		cproxy = getRandomCProxy()
@@ -91,28 +69,28 @@ func AddSubscriptionProxies(url string) error {
 	}
 
 	for _, rawProxy := range rawCfg.Proxies {
-		if err = addProxyIfNotExists(rawProxy); err != nil {
+		err := AddProxy(AddProxyReq{
+			Config:      rawProxy,
+			SubName:     req.SubName,
+			ForceUpdate: req.ForceUpdate,
+		})
+		if err != nil {
 			logger.Errorf("AddProxy failed for %v: %v", rawProxy, err)
 		}
 	}
 
-	for _, provider := range rawCfg.Providers {
+	for providerName, provider := range rawCfg.Providers {
 		if providerUrl, ok := provider["url"].(string); ok {
-			if err := AddSubscriptionProxies(providerUrl); err != nil {
+			err := AddSubscriptionProxies(AddProxyReq{
+				SubUrl:      providerUrl,
+				SubName:     providerName,
+				ForceUpdate: req.ForceUpdate,
+			})
+			if err != nil {
 				logger.Errorf("Failed to add provider %v proxies: %v", providerUrl, err)
 			}
 		}
 	}
 
 	return nil
-}
-
-func addProxyIfNotExists(rawProxy map[string]any) error {
-	key := fmt.Sprintf("%v:%v", rawProxy["server"], rawProxy["port"])
-	if dbClient.Exists(key) {
-		logger.Infof("Proxy key: %s already exists", key)
-		return nil
-	}
-
-	return AddProxy(AddProxyReq{Config: rawProxy})
 }

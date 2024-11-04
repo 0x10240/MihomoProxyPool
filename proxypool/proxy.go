@@ -1,6 +1,7 @@
 package proxypool
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,10 @@ import (
 	"github.com/metacubex/mihomo/tunnel"
 	logger "github.com/sirupsen/logrus"
 	"math/rand"
+	"net"
+	"net/http"
 	"net/netip"
+	"strconv"
 	"time"
 )
 
@@ -21,14 +25,17 @@ var allowIps = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustPars
 var localPortMaps = make(map[int]string, 0)
 var cproxies = make(map[string]CProxy, 0)
 var listeners = make(map[string]CListener, 0)
+
 var dbClient *db.RedisClient
 
 type CProxy = constant.Proxy
 
 type AddProxyReq struct {
-	Link   string         `json:"link"`   // 链接
-	Config map[string]any `json:"config"` // 配置，json信息
-	Sub    string         `json:"sub"`    // 订阅链接
+	Link        string         `json:"link"`   // 链接
+	Config      map[string]any `json:"config"` // 配置，json信息
+	SubUrl      string         `json:"sub"`    // 订阅链接
+	SubName     string         `json:"sub_name"`
+	ForceUpdate bool           `json:"update"`
 }
 
 type Proxy struct {
@@ -44,6 +51,7 @@ type Proxy struct {
 	LastCheckTime int64          `json:"last_check_time"`
 	AddTime       int64          `json:"add_time"`
 	Delay         int            `json:"delay"`
+	SubName       string         `json:"sub"`
 }
 
 type ProxyResp struct {
@@ -61,6 +69,7 @@ type ProxyResp struct {
 	IpRiskScore   string    `json:"ip_risk_score"`
 	LastCheckTime time.Time `json:"last_check_time"`
 	AliveTime     string    `json:"alive_time"`
+	SubName       string    `json:"sub"`
 }
 
 // CalculateAliveTime calculates the time difference in "XdXhXm" format
@@ -90,13 +99,33 @@ func (p Proxy) ToResp() ProxyResp {
 		Region:        p.Region,
 		LastCheckTime: ConvertTimestampToTime(p.LastCheckTime),
 		AddTime:       ConvertTimestampToTime(p.AddTime),
+		AliveTime:     CalculateAliveTime(p.AddTime),
 		Success:       p.SuccessCount,
 		Fail:          p.FailCount,
 		Delay:         p.Delay,
-		AliveTime:     CalculateAliveTime(p.AddTime),
+		SubName:       p.SubName,
 	}
 
 	return resp
+}
+
+func GetProxyTransport(proxy CProxy) *http.Transport {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, portStr, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			port, err := strconv.ParseUint(portStr, 10, 16)
+			if err != nil {
+				return nil, err
+			}
+			return proxy.DialContext(ctx, &constant.Metadata{
+				Host:    host,
+				DstPort: uint16(port),
+			})
+		},
+	}
 }
 
 func GetProxiesFromDb() (map[string]Proxy, error) {
@@ -298,14 +327,19 @@ func AddProxy(req AddProxyReq) error {
 	}
 
 	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
+	if !req.ForceUpdate && dbClient.Exists(key) {
+		logger.Infof("key: %s exists", key)
+		return nil
+	}
+
 	cfg["name"] = key
 	localPort := getLocalPort()
-
 	proxy := Proxy{
 		Config:    cfg,
 		AddTime:   time.Now().Unix(),
 		LocalPort: localPort,
 		Name:      key,
+		SubName:   req.SubName,
 	}
 
 	logger.Infof("Adding proxy %s on local port: %d", key, localPort)
