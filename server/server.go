@@ -2,7 +2,6 @@ package server
 
 import (
 	"crypto/subtle"
-	"github.com/0x10240/mihomo-proxy-pool/db"
 	"github.com/0x10240/mihomo-proxy-pool/proxypool"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -13,12 +12,13 @@ import (
 	"github.com/sagernet/cors"
 	"net/http"
 	"runtime/debug"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 var (
-	httpServer  *http.Server
-	dbClient, _ = db.NewRedisClientFromURL("mihomo_proxy_pool", "redis://:@192.168.50.88:6379/0")
+	httpServer *http.Server
 )
 
 type Config struct {
@@ -139,14 +139,52 @@ func getRandomProxy(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, proxy)
 }
 
+func convertIpRiskScore(percentage string) int {
+	// 去掉百分号
+	trimmed := strings.TrimSuffix(percentage, "%")
+
+	// 将字符串转换为整数
+	intValue, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 100
+	}
+
+	return intValue
+}
+
 func getAllProxy(w http.ResponseWriter, r *http.Request) {
 	proxies, err := proxypool.GetAllProxies()
 	if err != nil {
 		render.Status(r, http.StatusServiceUnavailable)
-		render.JSON(w, r, newError(err.Error()))
+		render.JSON(w, r, newError("Failed to retrieve proxies: "+err.Error()))
 		return
 	}
-	render.JSON(w, r, proxies)
+
+	sortProxies(proxies, r.URL.Query().Get("sort"))
+
+	resp := map[string]any{
+		"count":   len(proxies),
+		"proxies": proxies,
+	}
+
+	render.JSON(w, r, resp)
+}
+
+func sortProxies(proxies []proxypool.ProxyResp, sortKey string) {
+	switch sortKey {
+	case "risk_score":
+		sort.Slice(proxies, func(i, j int) bool {
+			return convertIpRiskScore(proxies[i].IpRiskScore) < convertIpRiskScore(proxies[j].IpRiskScore)
+		})
+	case "delay":
+		sort.Slice(proxies, func(i, j int) bool {
+			return proxies[i].Delay < proxies[j].Delay
+		})
+	case "time":
+		sort.Slice(proxies, func(i, j int) bool {
+			return proxies[i].AddTime.Unix() < proxies[j].AddTime.Unix()
+		})
+	}
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {

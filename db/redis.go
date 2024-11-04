@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -12,6 +13,7 @@ import (
 // RedisClient 封装了 Redis 操作
 type RedisClient struct {
 	name   string
+	mutex  sync.Mutex
 	client *redis.Client
 	ctx    context.Context
 }
@@ -47,6 +49,9 @@ func (r *RedisClient) Get(key string) (string, error) {
 
 // GetRandom 随机获取一个值
 func (r *RedisClient) GetRandom() (string, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	keys, err := r.client.HKeys(r.ctx, r.name).Result()
 	if err != nil {
 		return "", err
@@ -60,6 +65,9 @@ func (r *RedisClient) GetRandom() (string, error) {
 
 // Put 设置键值对
 func (r *RedisClient) Put(key string, val any) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	var data string
 	switch v := val.(type) {
 	case string:
@@ -76,11 +84,17 @@ func (r *RedisClient) Put(key string, val any) error {
 
 // Delete 删除指定键
 func (r *RedisClient) Delete(key string) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	return r.client.HDel(r.ctx, r.name, key).Err()
 }
 
 // Exists 检查键是否存在
 func (r *RedisClient) Exists(key string) bool {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	ret, err := r.client.HExists(r.ctx, r.name, key).Result()
 	if err != nil {
 		return false
@@ -90,6 +104,9 @@ func (r *RedisClient) Exists(key string) bool {
 
 // GetAllValues 获取所有值
 func (r *RedisClient) GetAllValues() ([]string, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	values, err := r.client.HVals(r.ctx, r.name).Result()
 	if err != nil {
 		return nil, err
@@ -99,6 +116,9 @@ func (r *RedisClient) GetAllValues() ([]string, error) {
 
 // GetAll 获取所有键值对
 func (r *RedisClient) GetAll() (map[string]string, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	items, err := r.client.HGetAll(r.ctx, r.name).Result()
 	if err != nil {
 		return nil, err
@@ -119,23 +139,4 @@ func (r *RedisClient) GetCount() (int64, error) {
 // ChangeTable 更改哈希表名称
 func (r *RedisClient) ChangeTable(name string) {
 	r.name = name
-}
-
-func main() {
-
-	client, _ := NewRedisClientFromURL("your_hash_name", "redis://:@192.168.50.88:6379/0")
-
-	// 示例：添加键值对
-	err := client.Put("key1", "value1")
-	if err != nil {
-		fmt.Println("Put Error:", err)
-	}
-
-	// 获取所有键值对
-	res, err := client.GetAll()
-	if err != nil {
-		fmt.Println("GetAll Error:", err)
-	} else {
-		fmt.Println("All Items:", res)
-	}
 }

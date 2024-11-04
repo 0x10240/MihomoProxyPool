@@ -20,27 +20,144 @@ var proxyPoolStartPort = 40001
 var allowIps = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
 var localPortMaps = make(map[int]string, 0)
 var cproxies = make(map[string]CProxy, 0)
+var listeners = make(map[string]CListener, 0)
+var dbClient *db.RedisClient
 
 type CProxy = constant.Proxy
 
 type AddProxyReq struct {
-	Link   string         `json:"link"`
-	Config map[string]any `json:"config"`
+	Link   string         `json:"link"`   // 链接
+	Config map[string]any `json:"config"` // 配置，json信息
+	Sub    string         `json:"sub"`    // 订阅链接
 }
 
 type Proxy struct {
 	Config        map[string]any `json:"config"`
+	Name          string         `json:"name"`
 	LocalPort     int            `json:"local_port"`
 	OutboundIp    string         `json:"ip"`
 	Region        string         `json:"region"`
-	IpRiskScore   int            `json:"ip_risk_score"`
+	IpType        string         `json:"ip_type"`
+	IpRiskScore   string         `json:"ip_risk_score"`
 	FailCount     int            `json:"fail"`
 	SuccessCount  int            `json:"success"`
-	LastCheckTime int            `json:"last_check_time"`
+	LastCheckTime int64          `json:"last_check_time"`
 	AddTime       int64          `json:"add_time"`
+	Delay         int            `json:"delay"`
 }
 
-var dbClient *db.RedisClient
+type ProxyResp struct {
+	Name          string    `json:"name"`
+	Server        string    `json:"server"`
+	ServerPort    int       `json:"server_port"`
+	AddTime       time.Time `json:"add_time"`
+	LocalPort     int       `json:"local_port"`
+	Success       int       `json:"success"`
+	Fail          int       `json:"fail"`
+	Delay         int       `json:"delay"`
+	Ip            string    `json:"ip"`
+	IpType        string    `json:"ip_type"`
+	Region        string    `json:"region"`
+	IpRiskScore   string    `json:"ip_risk_score"`
+	LastCheckTime time.Time `json:"last_check_time"`
+	AliveTime     string    `json:"alive_time"`
+}
+
+// CalculateAliveTime calculates the time difference in "XdXhXm" format
+func CalculateAliveTime(addTime int64) string {
+	duration := time.Since(ConvertTimestampToTime(addTime))
+
+	days := duration / (24 * time.Hour)
+	hours := (duration % (24 * time.Hour)) / time.Hour
+	minutes := (duration % time.Hour) / time.Minute
+
+	return fmt.Sprintf("%dd%dh%dm", days, hours, minutes)
+}
+
+func ConvertTimestampToTime(timestamp int64) time.Time {
+	return time.Unix(timestamp, 0)
+}
+
+func (p Proxy) ToResp() ProxyResp {
+	resp := ProxyResp{
+		Name:          p.Name,
+		LocalPort:     p.LocalPort,
+		Server:        p.Config["server"].(string),
+		ServerPort:    int(p.Config["port"].(float64)),
+		Ip:            p.OutboundIp,
+		IpType:        p.IpType,
+		IpRiskScore:   p.IpRiskScore,
+		Region:        p.Region,
+		LastCheckTime: ConvertTimestampToTime(p.LastCheckTime),
+		AddTime:       ConvertTimestampToTime(p.AddTime),
+		Success:       p.SuccessCount,
+		Fail:          p.FailCount,
+		Delay:         p.Delay,
+		AliveTime:     CalculateAliveTime(p.AddTime),
+	}
+
+	return resp
+}
+
+func GetProxiesFromDb() (map[string]Proxy, error) {
+	resp, err := dbClient.GetAll()
+	if err != nil {
+		return map[string]Proxy{}, err
+	}
+
+	ret := make(map[string]Proxy, 0)
+
+	for k, value := range resp {
+		//if !strings.Contains(k, "103.114.163.93") {
+		//	continue
+		//}
+		proxy := Proxy{}
+		if err = json.Unmarshal([]byte(value), &proxy); err != nil {
+			logger.Infof("unmarshal proxy: %v from db failed", value)
+			continue
+		}
+		ret[k] = proxy
+	}
+
+	return ret, nil
+}
+
+func DeleteProxy(proxy Proxy) error {
+	proxyKey := proxy.Name
+
+	if err := dbClient.Delete(proxyKey); err != nil {
+		logger.Errorf("delete proxy %s failed, err: %v", proxyKey, err)
+		return err
+	}
+
+	listenerKey := getListenerKey(proxy.LocalPort)
+
+	delete(cproxies, proxyKey)
+	delete(listeners, listenerKey)
+	delete(localPortMaps, proxy.LocalPort)
+
+	tunnel.UpdateProxies(cproxies, nil)
+	startListen(listeners, true)
+
+	return nil
+}
+
+func UpdateProxyDB(proxy *Proxy) error {
+	key := proxy.Config["name"].(string)
+	proxy.Name = key
+	proxy.LastCheckTime = time.Now().Unix()
+
+	if err := dbClient.Put(key, proxy); err != nil {
+		logger.Errorf("update proxy failed: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+func getListenerKey(localPort int) string {
+	return fmt.Sprintf("in_%d", localPort)
+}
 
 func InitProxyPool() error {
 	var err error
@@ -53,8 +170,6 @@ func InitProxyPool() error {
 	if err != nil {
 		return err
 	}
-
-	listeners := make(map[string]CListener, 0)
 
 	for _, value := range values {
 		proxy := Proxy{}
@@ -76,9 +191,10 @@ func InitProxyPool() error {
 			continue
 		}
 
-		logger.Infof("%s listen as %v", proxyName, proxy.LocalPort)
+		logger.Infof("%s listen at %v", proxyName, proxy.LocalPort)
 
-		listeners[fmt.Sprintf("in_%d", proxy.LocalPort)] = listener
+		listenerKey := getListenerKey(proxy.LocalPort)
+		listeners[listenerKey] = listener
 
 		localPortMaps[proxy.LocalPort] = proxyName
 	}
@@ -129,12 +245,42 @@ func addMihomoProxy(proxyCfg map[string]any, proxyName string, localPort int) er
 		return err
 	}
 
-	listeners := map[string]CListener{
-		fmt.Sprintf("in_%d", localPort): listener,
+	listenerKey := getListenerKey(localPort)
+	listeners[listenerKey] = listener
+
+	startListen(listeners, true)
+	return nil
+}
+
+func GetRandomProxy() (ProxyResp, error) {
+	proxy := Proxy{}
+	proxyStr, err := dbClient.GetRandom()
+	if err != nil {
+		return ProxyResp{}, err
+	}
+	if err = json.Unmarshal([]byte(proxyStr), &proxy); err != nil {
+		return ProxyResp{}, err
 	}
 
-	startListen(listeners, false)
-	return nil
+	return proxy.ToResp(), nil
+}
+
+func GetAllProxies() ([]ProxyResp, error) {
+	proxies, err := dbClient.GetAllValues()
+	if err != nil {
+		return []ProxyResp{}, err
+	}
+
+	ret := []ProxyResp{}
+	for _, proxy := range proxies {
+		item := Proxy{}
+		if err = json.Unmarshal([]byte(proxy), &item); err != nil {
+			continue
+		}
+		ret = append(ret, item.ToResp())
+	}
+
+	return ret, nil
 }
 
 func AddProxy(req AddProxyReq) error {
@@ -151,12 +297,13 @@ func AddProxy(req AddProxyReq) error {
 		cfg = req.Config
 	}
 
-	key := fmt.Sprintf("%s:%d", cfg["server"].(string), int(cfg["port"].(float64)))
-	if dbClient.Exists(key) {
-		logger.Infof("key: %s exists", key)
-		return nil
+	if req.Sub != "" {
+		if err := AddSubscriptionProxies(req.Sub); err != nil {
+			return err
+		}
 	}
 
+	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
 	cfg["name"] = key
 	localPort := getLocalPort()
 
@@ -164,50 +311,14 @@ func AddProxy(req AddProxyReq) error {
 		Config:    cfg,
 		AddTime:   time.Now().Unix(),
 		LocalPort: localPort,
+		Name:      key,
 	}
 
-	logger.Infof("add proxy %s, local port: %d", key, localPort)
-
-	localPortMaps[localPort] = key
-
+	logger.Infof("Adding proxy %s on local port: %d", key, localPort)
 	if err = addMihomoProxy(cfg, key, localPort); err != nil {
 		return err
 	}
 
-	if err = dbClient.Put(key, proxy); err != nil {
-		return nil
-	}
-
-	return nil
-}
-
-func GetRandomProxy() (Proxy, error) {
-	ret := Proxy{}
-
-	proxy, err := dbClient.GetRandom()
-	if err != nil {
-		return ret, err
-	}
-	if err = json.Unmarshal([]byte(proxy), &ret); err != nil {
-		return ret, err
-	}
-	return ret, nil
-}
-
-func GetAllProxies() ([]Proxy, error) {
-	proxies, err := dbClient.GetAllValues()
-	if err != nil {
-		return []Proxy{}, err
-	}
-
-	ret := []Proxy{}
-	for _, proxy := range proxies {
-		item := Proxy{}
-		if err = json.Unmarshal([]byte(proxy), &item); err != nil {
-			continue
-		}
-		ret = append(ret, item)
-	}
-
-	return ret, nil
+	localPortMaps[localPort] = key
+	return dbClient.Put(key, proxy)
 }
