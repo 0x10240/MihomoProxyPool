@@ -17,8 +17,11 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"sync"
 	"time"
 )
+
+type CProxy = constant.Proxy
 
 var proxyPoolStartPort = 40001
 var allowIps = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
@@ -27,8 +30,7 @@ var cproxies = make(map[string]CProxy, 0)
 var listeners = make(map[string]CListener, 0)
 
 var dbClient *db.RedisClient
-
-type CProxy = constant.Proxy
+var mu = sync.Mutex{}
 
 type AddProxyReq struct {
 	Link        string         `json:"link"`   // 链接
@@ -152,6 +154,9 @@ func GetProxiesFromDb() (map[string]Proxy, error) {
 }
 
 func DeleteProxy(proxy Proxy) error {
+	mu.Lock()
+	defer mu.Unlock()
+
 	proxyKey := proxy.Name
 
 	if err := dbClient.Delete(proxyKey); err != nil {
@@ -172,6 +177,9 @@ func DeleteProxy(proxy Proxy) error {
 }
 
 func UpdateProxyDB(proxy *Proxy) error {
+	mu.Lock()
+	defer mu.Unlock()
+
 	key := proxy.Config["name"].(string)
 	proxy.Name = key
 	proxy.LastCheckTime = time.Now().Unix()

@@ -57,6 +57,7 @@ func DoHealthCheck() error {
 
 			// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
 			delay, err := checkProxy(cproxy)
+			logger.Debugf("proxy %v: delay: %v", proxy.Name, delay)
 			if err != nil {
 				logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
 				proxy.FailCount++
