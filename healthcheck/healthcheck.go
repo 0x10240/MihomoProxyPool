@@ -1,37 +1,21 @@
 package healthcheck
 
 import (
-	"context"
 	"fmt"
-	"github.com/0x10240/mihomo-proxy-pool/config"
 	"sync"
 	"time"
 
 	"github.com/0x10240/mihomo-proxy-pool/ipinfo"
 	"github.com/0x10240/mihomo-proxy-pool/proxypool"
 	"github.com/metacubex/mihomo/adapter"
-	cutils "github.com/metacubex/mihomo/common/utils"
 	logger "github.com/sirupsen/logrus"
 )
 
 const (
-	defaultTimeout = 5 * time.Second
-	concurrency    = 16 // 并发限制
-	maxFailCount   = 6
-	checkInterval  = 10 * time.Minute
+	concurrency   = 16 // 并发限制
+	maxFailCount  = 6
+	checkInterval = 10 * time.Minute
 )
-
-// checkProxy 检查单个代理的健康状况
-func checkProxy(cproxy proxypool.CProxy) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	expectedStatus, _ := cutils.NewUnsignedRanges[uint16]("200-300")
-
-	testUrl := config.GetDelayTestUrl()
-	delay, err := cproxy.URLTest(ctx, testUrl, expectedStatus)
-	return int(delay), err
-}
 
 // DoHealthCheck 对代理池中的所有代理进行健康检查
 func DoHealthCheck() error {
@@ -68,7 +52,7 @@ func processProxyHealthCheck(proxy proxypool.Proxy) {
 	}
 
 	// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
-	delay, err := checkProxy(cproxy)
+	delay, err := proxypool.CheckProxy(cproxy)
 	logger.Debugf("proxy %v: delay: %v", proxy.Name, delay)
 	if err != nil {
 		logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
@@ -95,7 +79,7 @@ func processProxyHealthCheck(proxy proxypool.Proxy) {
 		proxyStr := fmt.Sprintf("socks5://127.0.0.1:%d", localPort)
 		ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
 		if err != nil {
-			logger.Infof("get ip risk info failed via %s", localPort)
+			logger.Infof("get ip risk info failed via %s", proxyStr)
 			return
 		}
 		proxy.IpType = ipRiskVal.IpType

@@ -10,6 +10,7 @@ import (
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/common/convert"
+	cutils "github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
 	logger "github.com/sirupsen/logrus"
@@ -19,19 +20,22 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-type CProxy = constant.Proxy
+const defaultTimeout = 10 * time.Second
 
 var allowIps = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
-var localPortMaps = make(map[int]string, 0)
+
+var localPortMap = sync.Map{}
 var cproxies = make(map[string]CProxy, 0)
 var listeners = make(map[string]CListener, 0)
-var proxyPoolStartPort = config.GetPoolStartPort()
 
 var dbClient *db.RedisClient
 var mu = sync.Mutex{}
+
+type CProxy = constant.Proxy
 
 type AddProxyReq struct {
 	Link        string         `json:"link"`   // 链接
@@ -39,6 +43,12 @@ type AddProxyReq struct {
 	SubUrl      string         `json:"sub"`    // 订阅链接
 	SubName     string         `json:"sub_name"`
 	ForceUpdate bool           `json:"update"`
+}
+
+type AddProxyResp struct {
+	Success int32 `json:"success"`
+	Failure int32 `json:"failure"`
+	Exist   int32 `json:"exist"`
 }
 
 type Proxy struct {
@@ -75,6 +85,18 @@ type ProxyResp struct {
 	SubName       string    `json:"sub"`
 }
 
+func (r *AddProxyResp) IncrementSuccess() {
+	atomic.AddInt32(&r.Success, 1)
+}
+
+func (r *AddProxyResp) IncrementFailure() {
+	atomic.AddInt32(&r.Failure, 1)
+}
+
+func (r *AddProxyResp) IncremenExist() {
+	atomic.AddInt32(&r.Exist, 1)
+}
+
 // CalculateAliveTime calculates the time difference in "XdXhXm" format
 func CalculateAliveTime(addTime int64) string {
 	duration := time.Since(ConvertTimestampToTime(addTime))
@@ -91,11 +113,29 @@ func ConvertTimestampToTime(timestamp int64) time.Time {
 }
 
 func (p Proxy) ToResp() ProxyResp {
+	var serverPort int
+	if port, ok := p.Config["port"].(float64); ok {
+		serverPort = int(port)
+	} else if portStr, ok := p.Config["port"].(string); ok {
+		// 如果是字符串类型，尝试将其转换为整数
+		portInt, err := strconv.Atoi(portStr)
+		if err == nil {
+			serverPort = portInt
+		} else {
+			// 处理无法转换为整数的情况，比如给个默认值
+			serverPort = 0 // 或者适当的默认值
+		}
+	} else {
+		// 处理无法识别的类型，比如给个默认值
+		serverPort = 0 // 或者适当的默认值
+	}
+
+
 	resp := ProxyResp{
 		Name:          p.Name,
 		LocalPort:     p.LocalPort,
 		Server:        p.Config["server"].(string),
-		ServerPort:    int(p.Config["port"].(float64)),
+		ServerPort:    serverPort,
 		Ip:            p.OutboundIp,
 		IpType:        p.IpType,
 		IpRiskScore:   p.IpRiskScore,
@@ -169,7 +209,7 @@ func DeleteProxy(proxy Proxy) error {
 
 	delete(cproxies, proxyKey)
 	delete(listeners, listenerKey)
-	delete(localPortMaps, proxy.LocalPort)
+	localPortMap.Delete(proxy.LocalPort)
 
 	tunnel.UpdateProxies(cproxies, nil)
 	startListen(listeners, true)
@@ -235,7 +275,7 @@ func InitProxyPool() error {
 		listenerKey := getListenerKey(proxy.LocalPort)
 		listeners[listenerKey] = listener
 
-		localPortMaps[proxy.LocalPort] = proxyName
+		localPortMap.Store(proxy.LocalPort, proxyName)
 	}
 
 	inbound.SetAllowedIPs(allowIps)
@@ -261,13 +301,36 @@ func parseProxyLink(link string) (map[string]any, error) {
 	return ret, nil
 }
 
-func getLocalPort() int {
-	for p := proxyPoolStartPort; p <= 65535; p++ {
-		if _, ok := localPortMaps[p]; !ok {
-			return p
+// 检查端口是否被操作系统占用
+func isPortAvailable(port int) bool {
+	address := fmt.Sprintf(":%d", port)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
+// 获取可用端口
+func getLocalPort(val string) int {
+	proxyPoolStartPort := config.GetPoolStartPort()
+
+	for port := proxyPoolStartPort; port <= 65535; port++ {
+		if _, ok := localPortMap.Load(port); !ok && isPortAvailable(port) {
+			localPortMap.Store(port, val)
+			return port
 		}
 	}
-	return rand.Intn(65535)
+
+	// 如果未找到端口，随机选择一个
+	for {
+		port := rand.Intn(65535-1024) + 1024 // 避免使用低于1024的端口
+		if isPortAvailable(port) {
+			localPortMap.Store(port, val)
+			return port
+		}
+	}
 }
 
 func addMihomoProxy(proxyCfg map[string]any, proxyName string, localPort int) error {
@@ -275,6 +338,16 @@ func addMihomoProxy(proxyCfg map[string]any, proxyName string, localPort int) er
 	if err != nil {
 		return err
 	}
+
+	delay, err := CheckProxy(cproxy)
+	if err != nil {
+		logger.Infof("check proxy： %s failed: %v", proxyName, err)
+	}
+	logger.Debugf("add mihomo proxy %s to proxy pool, delay: %v", proxyName, delay)
+
+	// 加锁防止并发出错
+	mu.Lock()
+	defer mu.Unlock()
 
 	cproxies[proxyName] = cproxy
 	tunnel.UpdateProxies(cproxies, nil)
@@ -322,12 +395,13 @@ func GetAllProxies() ([]ProxyResp, error) {
 	return ret, nil
 }
 
-func AddProxy(req AddProxyReq) error {
+func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 	var cfg map[string]any
 	var err error
 
 	if req.Link != "" {
 		if cfg, err = parseProxyLink(req.Link); err != nil {
+			resp.Failure++
 			return err
 		}
 	}
@@ -336,14 +410,25 @@ func AddProxy(req AddProxyReq) error {
 		cfg = req.Config
 	}
 
+	if port, ok := cfg["port"].(string); ok {
+		// 将字符串转换为整数
+		portInt, err := strconv.Atoi(port)
+		if err != nil {
+			resp.Failure++
+			return fmt.Errorf("invalid port value: %v", err)
+		}
+		cfg["port"] = portInt
+	}
+
 	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
 	if !req.ForceUpdate && dbClient.Exists(key) {
 		logger.Infof("key: %s exists", key)
+		resp.Exist++
 		return nil
 	}
 
 	cfg["name"] = key
-	localPort := getLocalPort()
+	localPort := getLocalPort(key)
 	proxy := Proxy{
 		Config:    cfg,
 		AddTime:   time.Now().Unix(),
@@ -353,24 +438,45 @@ func AddProxy(req AddProxyReq) error {
 	}
 
 	logger.Infof("Adding proxy %s on local port: %d", key, localPort)
+
 	if err = addMihomoProxy(cfg, key, localPort); err != nil {
+		localPortMap.Delete(key)
+		resp.Failure++
 		return err
 	}
 
-	localPortMaps[localPort] = key
+	resp.Success++
 	return dbClient.Put(key, proxy)
 }
 
 func GetRandomLocalPort() int {
 	var randomPort int
 	count := 0
-	for k := range localPortMaps {
+
+	localPortMap.Range(func(key, value interface{}) bool {
+		port, ok := key.(int)
+		if !ok {
+			return true // 如果类型断言失败，继续遍历
+		}
 		// Reservoir Sampling（蓄水池抽样）
-		// 如果 count 为 0 或者随机数为 0，则选择当前的键
 		if count == 0 || rand.Intn(count+1) == 0 {
-			randomPort = k
+			randomPort = port
 		}
 		count++
-	}
+		return true // 继续遍历
+	})
+
 	return randomPort
+}
+
+// checkProxy 检查单个代理的健康状况
+func CheckProxy(cproxy CProxy) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	expectedStatus, _ := cutils.NewUnsignedRanges[uint16]("200-300")
+
+	testUrl := config.GetDelayTestUrl()
+	delay, err := cproxy.URLTest(ctx, testUrl, expectedStatus)
+	return int(delay), err
 }

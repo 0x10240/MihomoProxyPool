@@ -6,6 +6,7 @@ import (
 	logger "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 	"math/rand"
+	"sync"
 )
 
 type RawConfig struct {
@@ -47,7 +48,7 @@ func readConfig(url string, proxy CProxy) ([]byte, error) {
 	return resp.Body(), nil
 }
 
-func AddSubscriptionProxies(req AddProxyReq) error {
+func AddSubscriptionProxies(req AddProxyReq, resp *AddProxyResp) error {
 	url := req.SubUrl
 
 	var cproxy CProxy
@@ -68,16 +69,26 @@ func AddSubscriptionProxies(req AddProxyReq) error {
 		return fmt.Errorf("YAML unmarshal failed: %v", err)
 	}
 
+	wg := &sync.WaitGroup{}
+
 	for _, rawProxy := range rawCfg.Proxies {
-		err := AddProxy(AddProxyReq{
+		wg.Add(1)
+		addReq := AddProxyReq{
 			Config:      rawProxy,
 			SubName:     req.SubName,
 			ForceUpdate: req.ForceUpdate,
-		})
-		if err != nil {
-			logger.Errorf("AddProxy failed for %v: %v", rawProxy, err)
 		}
+
+		go func(wg *sync.WaitGroup, req AddProxyReq, resp *AddProxyResp) {
+			defer wg.Done()
+
+			if err := AddProxy(req, resp); err != nil {
+				logger.Errorf("AddProxy failed for %v: %v", addReq.Config, err)
+			}
+		}(wg, addReq, resp)
 	}
+
+	wg.Wait()
 
 	for providerName, provider := range rawCfg.Providers {
 		if providerUrl, ok := provider["url"].(string); ok {
@@ -85,7 +96,7 @@ func AddSubscriptionProxies(req AddProxyReq) error {
 				SubUrl:      providerUrl,
 				SubName:     providerName,
 				ForceUpdate: req.ForceUpdate,
-			})
+			}, resp)
 			if err != nil {
 				logger.Errorf("Failed to add provider %v proxies: %v", providerUrl, err)
 			}
