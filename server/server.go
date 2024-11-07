@@ -185,10 +185,19 @@ func sortProxies(proxies []proxypool.ProxyResp, sortKey string) {
 	switch sortKey {
 	case "risk_score":
 		sort.Slice(proxies, func(i, j int) bool {
-			return convertIpRiskScore(proxies[i].IpRiskScore) < convertIpRiskScore(proxies[j].IpRiskScore)
+			if proxies[i].IpRiskScore == "" {
+				return false
+			}
+
+			si := convertIpRiskScore(proxies[i].IpRiskScore)
+			sj := convertIpRiskScore(proxies[j].IpRiskScore)
+			return si < sj
 		})
 	case "delay":
 		sort.Slice(proxies, func(i, j int) bool {
+			if proxies[i].Delay == 0 {
+				return false
+			}
 			return proxies[i].Delay < proxies[j].Delay
 		})
 	case "time":
@@ -202,7 +211,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, render.M{"hello": "mihomo proxy pool"})
 }
 
-func Start(cfg *Config) {
+func Start(cfg *Config) error {
 	// first stop existing server
 	if httpServer != nil {
 		_ = httpServer.Close()
@@ -214,7 +223,7 @@ func Start(cfg *Config) {
 		l, err := inbound.Listen("tcp", cfg.Addr)
 		if err != nil {
 			log.Errorln("API serve listen error: %s", err)
-			return
+			return err
 		}
 		log.Infoln("RESTful API listening at: %s", l.Addr().String())
 
@@ -224,6 +233,8 @@ func Start(cfg *Config) {
 		httpServer = server
 		if err = server.Serve(l); err != nil {
 			log.Errorln("API serve error: %s", err)
+			return err
 		}
 	}
+	return nil
 }

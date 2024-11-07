@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/0x10240/mihomo-proxy-pool/config"
 	"github.com/0x10240/mihomo-proxy-pool/db"
 	"github.com/chromedp/chromedp"
 	logger "github.com/sirupsen/logrus"
@@ -14,7 +15,8 @@ import (
 var ipRiskDb *db.RedisClient
 
 func init() {
-	ipRiskDb, _ = db.NewRedisClientFromURL("ip_risk", "redis://:@192.168.50.88:6379/0")
+	redisConn := config.GetRedisConn()
+	ipRiskDb, _ = db.NewRedisClientFromURL("ip_risk", redisConn)
 }
 
 type IpRiskScore struct {

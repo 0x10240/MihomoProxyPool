@@ -3,6 +3,7 @@ package healthcheck
 import (
 	"context"
 	"fmt"
+	"github.com/0x10240/mihomo-proxy-pool/config"
 	"sync"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 )
 
 const (
-	defaultTestUrl = "http://cp.cloudflare.com/generate_204"
 	defaultTimeout = 5 * time.Second
 	concurrency    = 16 // 并发限制
 	maxFailCount   = 6
@@ -27,7 +27,9 @@ func checkProxy(cproxy proxypool.CProxy) (int, error) {
 	defer cancel()
 
 	expectedStatus, _ := cutils.NewUnsignedRanges[uint16]("200-300")
-	delay, err := cproxy.URLTest(ctx, defaultTestUrl, expectedStatus)
+
+	testUrl := config.GetDelayTestUrl()
+	delay, err := cproxy.URLTest(ctx, testUrl, expectedStatus)
 	return int(delay), err
 }
 
@@ -49,55 +51,62 @@ func DoHealthCheck() error {
 			semaphore <- struct{}{}        // 获取一个令牌
 			defer func() { <-semaphore }() // 确保令牌释放
 
-			cproxy, err := adapter.ParseProxy(proxy.Config)
-			if err != nil {
-				logger.Errorf("parse proxy %v failed: err: %v", proxy.Name, err)
-				return
-			}
-
-			// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
-			delay, err := checkProxy(cproxy)
-			logger.Debugf("proxy %v: delay: %v", proxy.Name, delay)
-			if err != nil {
-				logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
-				proxy.FailCount++
-				if proxy.FailCount >= maxFailCount { // 使用 maxFailCount 常量
-					logger.Infof("delete proxy: %v", proxy.Name)
-					if delErr := proxypool.DeleteProxy(proxy); delErr != nil {
-						logger.Errorf("delete proxy: %s, err: %v", proxy.Name, delErr)
-					}
-					return // 删除后返回，防止进入更新数据库的逻辑
-				}
-			} else {
-				proxy.SuccessCount++
-				proxy.FailCount = 0
-			}
-
-			proxy.Delay = delay
-			if err == nil && proxy.OutboundIp == "" {
-				proxy.OutboundIp = ipinfo.GetProxyOutboundIP(cproxy)
-			}
-
-			if err == nil && proxy.IpRiskScore == "" {
-				proxyStr := fmt.Sprintf("socks5://127.0.0.1:%d", proxy.LocalPort)
-				ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
-				if err != nil {
-					logger.Infof("get ip risk info failed")
-				}
-				proxy.IpType = ipRiskVal.IpType
-				proxy.IpRiskScore = ipRiskVal.RiskScore
-				proxy.Region = ipRiskVal.Location
-			}
-
-			// 只有当代理未被删除时，才更新数据库
-			if updateErr := proxypool.UpdateProxyDB(&proxy); updateErr != nil {
-				logger.Errorf("update proxy: %+v, err: %v", proxy, updateErr)
-			}
+			processProxyHealthCheck(proxy)
 		}(proxy)
 	}
 
 	wg.Wait()
 	return nil
+}
+
+// processProxyHealthCheck 执行单个代理的健康检查
+func processProxyHealthCheck(proxy proxypool.Proxy) {
+	cproxy, err := adapter.ParseProxy(proxy.Config)
+	if err != nil {
+		logger.Errorf("parse proxy %v failed: err: %v", proxy.Name, err)
+		return
+	}
+
+	// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
+	delay, err := checkProxy(cproxy)
+	logger.Debugf("proxy %v: delay: %v", proxy.Name, delay)
+	if err != nil {
+		logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
+		proxy.FailCount++
+		if proxy.FailCount >= maxFailCount { // 使用 maxFailCount 常量
+			logger.Infof("delete proxy: %v", proxy.Name)
+			if delErr := proxypool.DeleteProxy(proxy); delErr != nil {
+				logger.Errorf("delete proxy: %s, err: %v", proxy.Name, delErr)
+			}
+			return // 删除后返回，防止进入更新数据库的逻辑
+		}
+	} else {
+		proxy.SuccessCount++
+		proxy.FailCount = 0
+	}
+
+	proxy.Delay = delay
+	if err == nil && proxy.OutboundIp == "" {
+		proxy.OutboundIp = ipinfo.GetProxyOutboundIP(cproxy)
+	}
+
+	if err == nil && proxy.IpRiskScore == "" {
+		localPort := proxypool.GetRandomLocalPort()
+		proxyStr := fmt.Sprintf("socks5://127.0.0.1:%d", localPort)
+		ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
+		if err != nil {
+			logger.Infof("get ip risk info failed via %s", localPort)
+			return
+		}
+		proxy.IpType = ipRiskVal.IpType
+		proxy.IpRiskScore = ipRiskVal.RiskScore
+		proxy.Region = ipRiskVal.Location
+	}
+
+	// 只有当代理未被删除时，才更新数据库
+	if updateErr := proxypool.UpdateProxyDB(&proxy); updateErr != nil {
+		logger.Errorf("update proxy: %+v, err: %v", proxy, updateErr)
+	}
 }
 
 // StartHealthCheckScheduler 每10分钟执行一次DoHealthCheck

@@ -14,7 +14,7 @@ func getListenerByLocalPort(localPort int, proxyName string) (CListener, error) 
 		"name":  fmt.Sprintf("in_%d", localPort),
 		"port":  localPort,
 		"proxy": proxyName,
-		"type":  "socks",
+		"type":  "mixed",
 	}
 
 	l, err := listener.ParseListener(proxy)

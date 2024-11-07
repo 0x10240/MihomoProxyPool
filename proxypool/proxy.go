@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/0x10240/mihomo-proxy-pool/config"
 	"github.com/0x10240/mihomo-proxy-pool/db"
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/inbound"
@@ -198,7 +199,8 @@ func getListenerKey(localPort int) string {
 
 func InitProxyPool() error {
 	var err error
-	dbClient, err = db.NewRedisClientFromURL("mihomo_proxy_pool", "redis://:@192.168.50.88:6379/0")
+	redisConn := config.GetRedisConn()
+	dbClient, err = db.NewRedisClientFromURL("mihomo_proxy_pool", redisConn)
 	if err != nil {
 		return err
 	}
@@ -357,4 +359,18 @@ func AddProxy(req AddProxyReq) error {
 
 	localPortMaps[localPort] = key
 	return dbClient.Put(key, proxy)
+}
+
+func GetRandomLocalPort() int {
+	var randomPort int
+	count := 0
+	for k := range localPortMaps {
+		// Reservoir Sampling（蓄水池抽样）
+		// 如果 count 为 0 或者随机数为 0，则选择当前的键
+		if count == 0 || rand.Intn(count+1) == 0 {
+			randomPort = k
+		}
+		count++
+	}
+	return randomPort
 }
