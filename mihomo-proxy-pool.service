@@ -1,0 +1,14 @@
+[Unit]
+Description=Mihomo Proxy Pool Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/mihomo-proxy-pool
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/root/
+
+[Install]
+WantedBy=multi-user.target
+
