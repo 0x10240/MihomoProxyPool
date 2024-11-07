@@ -24,11 +24,11 @@ import (
 
 type CProxy = constant.Proxy
 
-var proxyPoolStartPort = 40001
 var allowIps = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")}
 var localPortMaps = make(map[int]string, 0)
 var cproxies = make(map[string]CProxy, 0)
 var listeners = make(map[string]CListener, 0)
+var proxyPoolStartPort = config.GetPoolStartPort()
 
 var dbClient *db.RedisClient
 var mu = sync.Mutex{}

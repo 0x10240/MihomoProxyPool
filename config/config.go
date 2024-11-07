@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	RedisConn    string `yaml:"redis_conn"`
-	DelayTestUrl string `yaml:"delay_test_url"`
-	ServerAddr   string `yaml:"server_addr"`
+	RedisConn          string `yaml:"redis_conn"`
+	DelayTestUrl       string `yaml:"delay_test_url"`
+	ServerAddr         string `yaml:"server_addr"`
+	ProxyPoolStartPort int    `yaml:"proxy_pool_start_port"`
 }
 
 var config Config
@@ -34,4 +35,8 @@ func GetDelayTestUrl() string {
 
 func GetRedisConn() string {
 	return config.RedisConn
+}
+
+func GetPoolStartPort() int {
+	return config.ProxyPoolStartPort
 }

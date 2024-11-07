@@ -14,9 +14,11 @@ import (
 
 var ipRiskDb *db.RedisClient
 
-func init() {
+func InitIpRiskDb() error {
+	var err error
 	redisConn := config.GetRedisConn()
-	ipRiskDb, _ = db.NewRedisClientFromURL("ip_risk", redisConn)
+	ipRiskDb, err = db.NewRedisClientFromURL("ip_risk", redisConn)
+	return err
 }
 
 type IpRiskScore struct {

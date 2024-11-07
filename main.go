@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/0x10240/mihomo-proxy-pool/config"
 	"github.com/0x10240/mihomo-proxy-pool/healthcheck"
+	"github.com/0x10240/mihomo-proxy-pool/ipinfo"
 	"github.com/0x10240/mihomo-proxy-pool/proxypool"
 	"github.com/0x10240/mihomo-proxy-pool/server"
 	"github.com/sirupsen/logrus"
@@ -64,6 +65,11 @@ func main() {
 	// 初始化代理池
 	if err := proxypool.InitProxyPool(); err != nil {
 		fmt.Printf("Error initializing proxy pool: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := ipinfo.InitIpRiskDb(); err != nil {
+		fmt.Printf("Error initializing ip risk db: %v\n", err)
 		os.Exit(1)
 	}
 
