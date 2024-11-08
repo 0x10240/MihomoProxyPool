@@ -68,21 +68,22 @@ type Proxy struct {
 }
 
 type ProxyResp struct {
-	Name          string    `json:"name"`
-	Server        string    `json:"server"`
-	ServerPort    int       `json:"server_port"`
-	AddTime       time.Time `json:"add_time"`
-	LocalPort     int       `json:"local_port"`
-	Success       int       `json:"success"`
-	Fail          int       `json:"fail"`
-	Delay         int       `json:"delay"`
-	Ip            string    `json:"ip"`
-	IpType        string    `json:"ip_type"`
-	Region        string    `json:"region"`
-	IpRiskScore   string    `json:"ip_risk_score"`
-	LastCheckTime time.Time `json:"last_check_time"`
-	AliveTime     string    `json:"alive_time"`
-	SubName       string    `json:"sub"`
+	Name          string         `json:"name"`
+	Server        string         `json:"server"`
+	ServerPort    int            `json:"server_port"`
+	AddTime       time.Time      `json:"add_time"`
+	LocalPort     int            `json:"local_port"`
+	Success       int            `json:"success"`
+	Fail          int            `json:"fail"`
+	Delay         int            `json:"delay"`
+	Ip            string         `json:"ip"`
+	IpType        string         `json:"ip_type"`
+	Region        string         `json:"region"`
+	IpRiskScore   string         `json:"ip_risk_score"`
+	LastCheckTime time.Time      `json:"last_check_time"`
+	AliveTime     string         `json:"alive_time"`
+	SubName       string         `json:"sub,omitempty"`
+	Config        map[string]any `json:"config,omitempty"`
 }
 
 func (r *AddProxyResp) IncrementSuccess() {
@@ -112,7 +113,7 @@ func ConvertTimestampToTime(timestamp int64) time.Time {
 	return time.Unix(timestamp, 0)
 }
 
-func (p Proxy) ToResp() ProxyResp {
+func (p Proxy) ToResp(showConfig bool) ProxyResp {
 	var serverPort int
 	if port, ok := p.Config["port"].(float64); ok {
 		serverPort = int(port)
@@ -130,7 +131,6 @@ func (p Proxy) ToResp() ProxyResp {
 		serverPort = 0 // 或者适当的默认值
 	}
 
-
 	resp := ProxyResp{
 		Name:          p.Name,
 		LocalPort:     p.LocalPort,
@@ -147,6 +147,10 @@ func (p Proxy) ToResp() ProxyResp {
 		Fail:          p.FailCount,
 		Delay:         p.Delay,
 		SubName:       p.SubName,
+	}
+
+	if showConfig {
+		resp.Config = p.Config
 	}
 
 	return resp
@@ -374,10 +378,10 @@ func GetRandomProxy() (ProxyResp, error) {
 		return ProxyResp{}, err
 	}
 
-	return proxy.ToResp(), nil
+	return proxy.ToResp(false), nil
 }
 
-func GetAllProxies() ([]ProxyResp, error) {
+func GetAllProxies(showConfig bool) ([]ProxyResp, error) {
 	proxies, err := dbClient.GetAllValues()
 	if err != nil {
 		return []ProxyResp{}, err
@@ -389,7 +393,7 @@ func GetAllProxies() ([]ProxyResp, error) {
 		if err = json.Unmarshal([]byte(proxy), &item); err != nil {
 			continue
 		}
-		ret = append(ret, item.ToResp())
+		ret = append(ret, item.ToResp(showConfig))
 	}
 
 	return ret, nil

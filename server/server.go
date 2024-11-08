@@ -166,7 +166,8 @@ func convertIpRiskScore(percentage string) int {
 }
 
 func getAllProxy(w http.ResponseWriter, r *http.Request) {
-	proxies, err := proxypool.GetAllProxies()
+	showConfig := r.URL.Query().Get("show_config") == "true"
+	proxies, err := proxypool.GetAllProxies(showConfig)
 	if err != nil {
 		render.Status(r, http.StatusServiceUnavailable)
 		render.JSON(w, r, newError("Failed to retrieve proxies: "+err.Error()))
