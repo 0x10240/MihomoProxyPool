@@ -1,6 +1,7 @@
 package proxypool
 
 import (
+	"crypto/tls"
 	"fmt"
 	"github.com/go-resty/resty/v2"
 	logger "github.com/sirupsen/logrus"
@@ -34,6 +35,9 @@ func readConfig(url string, proxy CProxy) ([]byte, error) {
 		transPort := GetProxyTransport(proxy)
 		client.SetTransport(transPort)
 	}
+
+	// 设置不验证 SSL 证书
+	client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 	// 发起 GET 请求
 	resp, err := client.R().
