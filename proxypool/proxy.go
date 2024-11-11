@@ -293,7 +293,8 @@ func InitProxyPool() error {
 func parseProxyLink(link string) (map[string]any, error) {
 	ret := map[string]any{}
 
-	cfgs, err := convert.ConvertsV2Ray([]byte(link))
+	encodedLink := enc.EncodeToString([]byte(link))
+	cfgs, err := convert.ConvertsV2Ray([]byte(encodedLink))
 	if err != nil {
 		return ret, err
 	}
@@ -302,7 +303,11 @@ func parseProxyLink(link string) (map[string]any, error) {
 		return ret, errors.New("invalid proxy link")
 	}
 
-	return ret, nil
+	for _, cfg := range cfgs {
+		return cfg, nil
+	}
+
+	return ret, errors.New("parse proxy link failed")
 }
 
 // 检查端口是否被操作系统占用
@@ -346,6 +351,7 @@ func addMihomoProxy(proxyCfg map[string]any, proxyName string, localPort int) er
 	delay, err := CheckProxy(cproxy)
 	if err != nil {
 		logger.Infof("check proxy： %s failed: %v", proxyName, err)
+		return err
 	}
 	logger.Debugf("add mihomo proxy %s to proxy pool, delay: %v", proxyName, delay)
 
@@ -405,7 +411,7 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 
 	if req.Link != "" {
 		if cfg, err = parseProxyLink(req.Link); err != nil {
-			resp.Failure++
+			resp.IncrementFailure()
 			return err
 		}
 	}
@@ -418,7 +424,7 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 		// 将字符串转换为整数
 		portInt, err := strconv.Atoi(port)
 		if err != nil {
-			resp.Failure++
+			resp.IncrementFailure()
 			return fmt.Errorf("invalid port value: %v", err)
 		}
 		cfg["port"] = portInt
@@ -427,7 +433,7 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
 	if !req.ForceUpdate && dbClient.Exists(key) {
 		logger.Infof("key: %s exists", key)
-		resp.Exist++
+		resp.IncremenExist()
 		return nil
 	}
 
@@ -445,11 +451,11 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 
 	if err = addMihomoProxy(cfg, key, localPort); err != nil {
 		localPortMap.Delete(key)
-		resp.Failure++
+		resp.IncrementFailure()
 		return err
 	}
 
-	resp.Success++
+	resp.IncrementSuccess()
 	return dbClient.Put(key, proxy)
 }
 
