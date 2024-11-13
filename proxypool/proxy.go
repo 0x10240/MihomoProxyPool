@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ var listeners = make(map[string]CListener, 0)
 
 var dbClient *db.RedisClient
 var mu = sync.Mutex{}
+var portMu = sync.Mutex{}
 
 type CProxy = constant.Proxy
 
@@ -184,9 +186,6 @@ func GetProxiesFromDb() (map[string]Proxy, error) {
 	ret := make(map[string]Proxy, 0)
 
 	for k, value := range resp {
-		//if !strings.Contains(k, "103.114.163.93") {
-		//	continue
-		//}
 		proxy := Proxy{}
 		if err = json.Unmarshal([]byte(value), &proxy); err != nil {
 			logger.Infof("unmarshal proxy: %v from db failed", value)
@@ -209,7 +208,7 @@ func DeleteProxy(proxy Proxy) error {
 		return err
 	}
 
-	listenerKey := getListenerKey(proxy.LocalPort)
+	listenerKey := proxyKey
 
 	delete(cproxies, proxyKey)
 	delete(listeners, listenerKey)
@@ -235,10 +234,6 @@ func UpdateProxyDB(proxy *Proxy) error {
 	}
 
 	return nil
-}
-
-func getListenerKey(localPort int) string {
-	return fmt.Sprintf("in_%d", localPort)
 }
 
 func InitProxyPool() error {
@@ -276,7 +271,7 @@ func InitProxyPool() error {
 
 		logger.Infof("%s listen at %v", proxyName, proxy.LocalPort)
 
-		listenerKey := getListenerKey(proxy.LocalPort)
+		listenerKey := proxyName
 		listeners[listenerKey] = listener
 
 		localPortMap.Store(proxy.LocalPort, proxyName)
@@ -312,18 +307,24 @@ func parseProxyLink(link string) (map[string]any, error) {
 
 // 检查端口是否被操作系统占用
 func isPortAvailable(port int) bool {
-	address := fmt.Sprintf(":%d", port)
-	listener, err := net.Listen("tcp", address)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	// 尝试使用 Dial 而不是 Listen
+	conn, err := net.DialTimeout("tcp", address, time.Second)
 	if err != nil {
-		return false
+		// 端口未被使用
+		return true
 	}
-	_ = listener.Close()
-	return true
+	// 关闭连接，因为端口已经被占用
+	_ = conn.Close()
+	return false
 }
 
 // 获取可用端口
 func getLocalPort(val string) int {
 	proxyPoolStartPort := config.GetPoolStartPort()
+
+	portMu.Lock()
+	defer portMu.Unlock()
 
 	for port := proxyPoolStartPort; port <= 65535; port++ {
 		if _, ok := localPortMap.Load(port); !ok && isPortAvailable(port) {
@@ -367,8 +368,7 @@ func addMihomoProxy(proxyCfg map[string]any, proxyName string, localPort int) er
 		return err
 	}
 
-	listenerKey := getListenerKey(localPort)
-	listeners[listenerKey] = listener
+	listeners[proxyName] = listener
 
 	startListen(listeners, true)
 	return nil
@@ -450,7 +450,7 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 	logger.Infof("Adding proxy %s on local port: %d", key, localPort)
 
 	if err = addMihomoProxy(cfg, key, localPort); err != nil {
-		localPortMap.Delete(key)
+		localPortMap.Delete(localPort)
 		resp.IncrementFailure()
 		return err
 	}
@@ -463,7 +463,7 @@ func GetRandomLocalPort() int {
 	var randomPort int
 	count := 0
 
-	localPortMap.Range(func(key, value interface{}) bool {
+	localPortMap.Range(func(key, value any) bool {
 		port, ok := key.(int)
 		if !ok {
 			return true // 如果类型断言失败，继续遍历
@@ -489,4 +489,27 @@ func CheckProxy(cproxy CProxy) (int, error) {
 	testUrl := config.GetDelayTestUrl()
 	delay, err := cproxy.URLTest(ctx, testUrl, expectedStatus)
 	return int(delay), err
+}
+
+func GetLocalPortMap() []map[int]string {
+	arr := make([]map[int]string, 0)
+	localPortMap.Range(func(key, value any) bool {
+		arr = append(arr, map[int]string{key.(int): value.(string)})
+		return true
+	})
+
+	// 按照键值（端口号）升序排序
+	sort.Slice(arr, func(i, j int) bool {
+		// 获取每个 map 的第一个键，因为 map 中只存一个键值对
+		var keyI, keyJ int
+		for k := range arr[i] {
+			keyI = k
+		}
+		for k := range arr[j] {
+			keyJ = k
+		}
+		return keyI < keyJ
+	})
+
+	return arr
 }

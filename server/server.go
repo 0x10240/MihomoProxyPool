@@ -109,9 +109,16 @@ func router(isDebug bool, secret string, cors Cors) *chi.Mux {
 		r.Get("/get", getRandomProxy)
 		r.Get("/all", getAllProxy)
 		r.Post("/add", addProxy)
+		r.Get("/port_map", getLocalPortMap)
 	})
 
 	return r
+}
+
+func getLocalPortMap(w http.ResponseWriter, r *http.Request) {
+	resp := proxypool.GetLocalPortMap()
+	render.Status(r, 200)
+	render.JSON(w, r, resp)
 }
 
 func addProxy(w http.ResponseWriter, r *http.Request) {

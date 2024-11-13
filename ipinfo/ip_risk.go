@@ -83,7 +83,7 @@ func GetIpRiskScore(server string, proxy string) (IpRiskScore, error) {
 	result.RiskScore = riskScore
 
 	// Store result in the database
-	if err = ipRiskDb.Put(ip, result); err != nil {
+	if err = ipRiskDb.Put(server, result); err != nil {
 		logger.Warning("put ip: %v score to db failed, err: %v", server, err)
 	}
 

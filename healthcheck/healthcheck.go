@@ -74,7 +74,7 @@ func processProxyHealthCheck(proxy proxypool.Proxy) {
 		proxy.OutboundIp = ipinfo.GetProxyOutboundIP(cproxy)
 	}
 
-	if err == nil && proxy.IpRiskScore == "" {
+	if err == nil && proxy.OutboundIp != "" && proxy.IpRiskScore == "" {
 		localPort := proxypool.GetRandomLocalPort()
 		proxyStr := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 		ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)

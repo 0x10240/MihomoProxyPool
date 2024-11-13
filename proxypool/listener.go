@@ -1,7 +1,6 @@
 package proxypool
 
 import (
-	"fmt"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/tunnel"
@@ -11,7 +10,7 @@ type CListener = constant.InboundListener
 
 func getListenerByLocalPort(localPort int, proxyName string) (CListener, error) {
 	proxy := map[string]any{
-		"name":  fmt.Sprintf("in_%d", localPort),
+		"name":  proxyName,
 		"port":  localPort,
 		"proxy": proxyName,
 		"type":  "mixed",
