@@ -4,9 +4,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/go-resty/resty/v2"
+	"github.com/metacubex/mihomo/common/convert"
 	logger "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 	"math/rand"
+	"strings"
 	"sync"
 )
 
@@ -52,6 +54,20 @@ func readConfig(url string, proxy CProxy) ([]byte, error) {
 	return resp.Body(), nil
 }
 
+func tryParseV2raySub(body []byte, rawCfg *RawConfig) error {
+	s := string(body)
+	if strings.Contains(s, "://") {
+		encodedLinks := enc.EncodeToString(body)
+		body = []byte(encodedLinks)
+	}
+	cfgs, err := convert.ConvertsV2Ray(body)
+	if err != nil {
+		return err
+	}
+	rawCfg.Proxies = cfgs
+	return nil
+}
+
 func AddSubscriptionProxies(req AddProxyReq, resp *AddProxyResp) error {
 	url := req.SubUrl
 
@@ -70,7 +86,11 @@ func AddSubscriptionProxies(req AddProxyReq, resp *AddProxyResp) error {
 
 	rawCfg := &RawConfig{}
 	if err = yaml.Unmarshal(body, rawCfg); err != nil {
-		return fmt.Errorf("YAML unmarshal failed: %v", err)
+		logger.Warning("YAML unmarshal failed: %v", err)
+
+		if err = tryParseV2raySub(body, rawCfg); err != nil {
+			return err
+		}
 	}
 
 	wg := &sync.WaitGroup{}

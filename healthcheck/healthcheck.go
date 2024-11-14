@@ -13,7 +13,7 @@ import (
 
 const (
 	concurrency   = 16 // 并发限制
-	maxFailCount  = 6
+	maxFailCount  = 10
 	checkInterval = 10 * time.Minute
 )
 
@@ -63,6 +63,9 @@ func processProxyHealthCheck(proxy proxypool.Proxy) {
 				logger.Errorf("delete proxy: %s, err: %v", proxy.Name, delErr)
 			}
 			return // 删除后返回，防止进入更新数据库的逻辑
+		}
+		if proxy.SuccessCount > 0 {
+			proxy.SuccessCount--
 		}
 	} else {
 		proxy.SuccessCount++
