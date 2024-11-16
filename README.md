@@ -1,13 +1,23 @@
 
 
-基于 [mihomo](https://github.com/MetaCubeX/mihomo 将订阅转换成本地代理池
+## 介绍
+
+`MihomoProxyPool` 是基于 [mihomo](https://github.com/MetaCubeX/mihomo) (clash-meta) 内核, 将订阅节点转换为本地 `sock5/http` 代理池的项目
+
+支持 `Shadowsocks`, `ShadowsocksR`, `Vmess`, `Vless`, `Trojan`, `Hysteria`, `Hysteria2`, `WireGuard`, `Socks5`, `Http` 等协议
+
+比免费代理池更加安全、稳定、快速(免费代理没有加密, 风险值高, ip万人骑), 比付费代理更实惠(机场的订阅几块钱就有几十个节点, 而付费代理1G流量就要$1)
+
+支持通过接口动态添加/删除代理
 
 ## 使用说明
 
 1. 安装 docker
+
 ```bash
 curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
 ```
+
 2. 安装 redis 数据库
 
 ```bash
