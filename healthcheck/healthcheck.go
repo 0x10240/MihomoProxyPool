@@ -1,7 +1,6 @@
 package healthcheck
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -52,42 +51,47 @@ func processProxyHealthCheck(proxy proxypool.Proxy) {
 	}
 
 	// 在每个 goroutine 中定义 err 为局部变量，避免数据竞争
-	delay, err := proxypool.CheckProxy(cproxy)
-	logger.Debugf("proxy %v: delay: %v", proxy.Name, delay)
+	proxy.Delay, err = proxypool.CheckProxy(cproxy)
+	logger.Debugf("proxy %v: delay: %v", proxy.Name, proxy.Delay)
+
 	if err != nil {
 		logger.Infof("check proxy: %s, err: %v", proxy.Name, err)
 		proxy.FailCount++
-		if proxy.FailCount >= maxFailCount { // 使用 maxFailCount 常量
-			logger.Infof("delete proxy: %v", proxy.Name)
-			if delErr := proxypool.DeleteProxy(proxy); delErr != nil {
-				logger.Errorf("delete proxy: %s, err: %v", proxy.Name, delErr)
-			}
-			return // 删除后返回，防止进入更新数据库的逻辑
-		}
-		if proxy.SuccessCount > 0 {
-			proxy.SuccessCount--
-		}
 	} else {
-		proxy.SuccessCount++
-		proxy.FailCount = 0
-	}
-
-	proxy.Delay = delay
-	if err == nil && proxy.OutboundIp == "" {
-		proxy.OutboundIp = ipinfo.GetProxyOutboundIP(cproxy)
-	}
-
-	if err == nil && proxy.OutboundIp != "" && proxy.IpRiskScore == "" {
-		localPort := proxypool.GetRandomLocalPort()
-		proxyStr := fmt.Sprintf("http://127.0.0.1:%d", localPort)
-		ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
-		if err != nil {
-			logger.Infof("get ip risk info failed via %s", proxyStr)
-			return
+		if proxy.OutboundIp == "" {
+			proxy.OutboundIp, err = ipinfo.GetProxyOutboundIP(cproxy)
 		}
-		proxy.IpType = ipRiskVal.IpType
-		proxy.IpRiskScore = ipRiskVal.RiskScore
-		proxy.Region = ipRiskVal.Location
+
+		if err != nil {
+			// 获取不到 ip 也认为健康检查失败
+			// 避免一些 403 端口的 trojan 协议假在线
+			proxy.FailCount++
+			logger.Debugf("get outbound ip: %v, err: %v", proxy.Name, err)
+		} else {
+			proxy.SuccessCount++
+			proxy.FailCount = 0
+
+			//if proxy.OutboundIp != "" && proxy.IpRiskScore == "" {
+			//	localPort := proxypool.GetRandomLocalPort()
+			//	proxyStr := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+			//	ipRiskVal, err := ipinfo.GetIpRiskScore(proxy.OutboundIp, proxyStr)
+			//	if err != nil {
+			//		logger.Infof("get ip risk info failed via %s", proxyStr)
+			//		return
+			//	}
+			//	proxy.IpType = ipRiskVal.IpType
+			//	proxy.IpRiskScore = ipRiskVal.RiskScore
+			//	proxy.Region = ipRiskVal.Location
+			//}
+		}
+	}
+
+	if proxy.FailCount >= maxFailCount { // 使用 maxFailCount 常量
+		logger.Infof("delete proxy: %v", proxy.Name)
+		if delErr := proxypool.DeleteProxy(proxy); delErr != nil {
+			logger.Errorf("delete proxy: %s, err: %v", proxy.Name, delErr)
+		}
+		return // 删除后返回，防止进入更新数据库的逻辑
 	}
 
 	// 只有当代理未被删除时，才更新数据库
