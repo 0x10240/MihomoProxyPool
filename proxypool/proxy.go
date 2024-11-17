@@ -430,6 +430,10 @@ func AddProxy(req AddProxyReq, resp *AddProxyResp) error {
 		cfg["port"] = portInt
 	}
 
+	if cfg["server"] == nil || cfg["port"] == nil {
+		return fmt.Errorf("invalid proxy server or port")
+	}
+
 	key := fmt.Sprintf("%v:%v", cfg["server"], cfg["port"])
 	if !req.ForceUpdate && dbClient.Exists(key) {
 		logger.Infof("key: %s exists", key)
