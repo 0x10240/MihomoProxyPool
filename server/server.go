@@ -109,6 +109,7 @@ func router(isDebug bool, secret string, cors Cors) *chi.Mux {
 		r.Get("/get", getRandomProxy)
 		r.Get("/all", getAllProxy)
 		r.Post("/add", addProxy)
+		r.Post("/delete", deleteProxy)
 		r.Get("/port_map", getLocalPortMap)
 	})
 
@@ -119,6 +120,27 @@ func getLocalPortMap(w http.ResponseWriter, r *http.Request) {
 	resp := proxypool.GetLocalPortMap()
 	render.Status(r, 200)
 	render.JSON(w, r, resp)
+}
+
+func deleteProxy(w http.ResponseWriter, r *http.Request) {
+	req := struct {
+		Name string `json:"name"`
+	}{}
+
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		render.Status(r, http.StatusBadRequest)
+		render.JSON(w, r, ErrBadRequest)
+		return
+	}
+
+	if err := proxypool.DeleteProxyByName(req.Name); err != nil {
+		render.Status(r, http.StatusServiceUnavailable)
+		render.JSON(w, r, newError(err.Error()))
+		return
+	}
+
+	render.Status(r, 200)
+	render.JSON(w, r, map[string]string{"message": "ok"})
 }
 
 func addProxy(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +188,7 @@ func convertIpRiskScore(percentage string) int {
 	// 将字符串转换为整数
 	intValue, err := strconv.Atoi(trimmed)
 	if err != nil {
-		return 100
+		return 101
 	}
 
 	return intValue

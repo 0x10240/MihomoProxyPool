@@ -34,6 +34,7 @@ var cproxies = make(map[string]CProxy, 0)
 var listeners = make(map[string]CListener, 0)
 
 var dbClient *db.RedisClient
+var deleteProxyDbClient *db.RedisClient
 var mu = sync.Mutex{}
 var portMu = sync.Mutex{}
 
@@ -203,6 +204,13 @@ func DeleteProxy(proxy Proxy) error {
 
 	proxyKey := proxy.Name
 
+	if config.IsSoftDelete() {
+		val, _ := dbClient.Get(proxyKey)
+		if err := deleteProxyDbClient.Put(proxyKey, val); err != nil {
+			logger.Errorf("delete proxy %s failed, err: %v", proxyKey, err)
+		}
+	}
+
 	if err := dbClient.Delete(proxyKey); err != nil {
 		logger.Errorf("delete proxy %s failed, err: %v", proxyKey, err)
 		return err
@@ -218,6 +226,21 @@ func DeleteProxy(proxy Proxy) error {
 	startListen(listeners, true)
 
 	return nil
+}
+
+func DeleteProxyByName(name string) error {
+	value, err := dbClient.Get(name)
+	if err != nil {
+		return err
+	}
+	proxy := Proxy{}
+
+	if err = json.Unmarshal([]byte(value), &proxy); err != nil {
+		return err
+	}
+
+	logger.Infof("delete proxy %s", proxy.Name)
+	return DeleteProxy(proxy)
 }
 
 func UpdateProxyDB(proxy *Proxy) error {
@@ -240,6 +263,11 @@ func InitProxyPool() error {
 	var err error
 	redisConn := config.GetRedisConn()
 	dbClient, err = db.NewRedisClientFromURL("mihomo_proxy_pool", redisConn)
+	if err != nil {
+		return err
+	}
+
+	deleteProxyDbClient, err = db.NewRedisClientFromURL("deleted_proxies", redisConn)
 	if err != nil {
 		return err
 	}

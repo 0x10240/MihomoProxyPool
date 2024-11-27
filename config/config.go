@@ -10,6 +10,7 @@ type Config struct {
 	DelayTestUrl       string `yaml:"delay_test_url"`
 	ServerAddr         string `yaml:"server_addr"`
 	ProxyPoolStartPort int    `yaml:"proxy_pool_start_port"`
+	SoftDelete         bool   `yaml:"soft_delete"`
 }
 
 var config Config
@@ -39,4 +40,8 @@ func GetRedisConn() string {
 
 func GetPoolStartPort() int {
 	return config.ProxyPoolStartPort
+}
+
+func IsSoftDelete() bool {
+	return config.SoftDelete
 }
