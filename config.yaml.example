@@ -1,4 +1,4 @@
-redis_conn: redis://:redis_MSJCpa@192.168.50.151:6379/0
+redis_conn: redis://:password@127.0.0.1:6379/0
 delay_test_url: http://cp.cloudflare.com/generate_204
 server_addr: 0.0.0.0:9999
 proxy_pool_start_port: 40001
