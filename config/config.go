@@ -11,6 +11,9 @@ type Config struct {
 	ServerAddr         string `yaml:"server_addr"`
 	ProxyPoolStartPort int    `yaml:"proxy_pool_start_port"`
 	SoftDelete         bool   `yaml:"soft_delete"`
+	AuthUser           string `yaml:"auth_user"`
+	AuthPass           string `yaml:"auth_pass"`
+	Secret             string `yaml:"secret"`
 }
 
 var config Config

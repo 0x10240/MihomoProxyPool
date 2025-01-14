@@ -63,7 +63,7 @@ func main() {
 	logrus.SetFormatter(&LogFormatter{})
 
 	// 初始化代理池
-	if err := proxypool.InitProxyPool(); err != nil {
+	if err := proxypool.InitProxyPool(cfg); err != nil {
 		fmt.Printf("Error initializing proxy pool: %v\n", err)
 		os.Exit(1)
 	}
@@ -81,6 +81,7 @@ func main() {
 			AllowOrigins:        []string{},
 			AllowPrivateNetwork: true,
 		},
+		Secret: cfg.Secret,
 	}
 
 	// 启动健康检查调度器

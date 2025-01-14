@@ -1,8 +1,10 @@
 package proxypool
 
 import (
+	"github.com/metacubex/mihomo/component/auth"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/listener"
+	authStore "github.com/metacubex/mihomo/listener/auth"
 	"github.com/metacubex/mihomo/tunnel"
 )
 
@@ -22,6 +24,12 @@ func getListenerByLocalPort(localPort int, proxyName string) (CListener, error) 
 	}
 
 	return l, nil
+}
+
+func setProxyAuthUser(user, password string) {
+	users := []auth.AuthUser{{User: user, Pass: password}}
+	authenticator := auth.NewAuthenticator(users)
+	authStore.Default.SetAuthenticator(authenticator)
 }
 
 func startListen(listeners map[string]CListener, dropOld bool) {

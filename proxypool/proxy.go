@@ -259,7 +259,7 @@ func UpdateProxyDB(proxy *Proxy) error {
 	return nil
 }
 
-func InitProxyPool() error {
+func InitProxyPool(cfg *config.Config) error {
 	var err error
 	redisConn := config.GetRedisConn()
 	dbClient, err = db.NewRedisClientFromURL("mihomo_proxy_pool", redisConn)
@@ -307,6 +307,7 @@ func InitProxyPool() error {
 
 	inbound.SetAllowedIPs(allowIps)
 	tunnel.UpdateProxies(cproxies, nil)
+	setProxyAuthUser(cfg.AuthUser, cfg.AuthPass)
 	startListen(listeners, true)
 	tunnel.OnRunning()
 

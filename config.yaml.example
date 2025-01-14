@@ -2,4 +2,7 @@ redis_conn: redis://:password@127.0.0.1:6379/0
 delay_test_url: http://cp.cloudflare.com/generate_204
 server_addr: 0.0.0.0:9999
 proxy_pool_start_port: 40001
-soft_delete: true
+soft_delete: false
+auth_user: user
+auth_pass: password
+secret: xxxxxx
